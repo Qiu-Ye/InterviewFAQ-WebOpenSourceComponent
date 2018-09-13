@@ -1,1 +1,546 @@
-# InterviewFAQ-WebOpenSourceComponent
+-   [InterviewFAQ-WebOpenSourceComponent](#interviewfaq-webopensourcecomponent)
+    -   [Web开源组件](#web开源组件)
+        -   [Apache](#apache)
+        -   [Nginx](#nginx)
+        -   [LVS](#lvs)
+        -   [Keepalived](#keepalived)
+        -   [Docker](#docker)
+        -   [虚拟化与云计算](#虚拟化与云计算)
+
+InterviewFAQ-WebOpenSourceComponent
+=====================
+
+## Web开源组件
+
+### Apache
+
+- 如何在一台虚拟机上同时部署4个网站，访问域名分别是 www.test1.net www.test2.net test1.jjwxc.net test2.jjwxc.net？
+- dmesg命令中看到ip-conntrack：table full，dropping packet，如何解决？
+  - 线上web服务器在访问量很大时，就会出现网络连接丢包的问题，通过dmesg命令查看日志，发现如下信息：ip_conntrack: table full, dropping packet.从这里可以判断出这跟iptables有关系，因为iptables防火墙使用了ip_conntrack内核模块实现连接跟踪功能，所有的进出数据包都会记录在连接跟踪表中，包括tcp，udp，icmp等，一旦连接跟踪表被填满以后，就会发生丢包，导致网络不稳定。当这张表满了，就会在日志里面写入该信息（执行命令dmesge | more查看）。当服务器打开了iptables防火墙，并且是在网站流量非常高的时候经常会出现这个问题。这个问题的原因是由于web服务器收到了大量的连接，在启用了iptables的情况下，iptables会把所有的连接都做链接跟踪处理，这样iptables就会有一个链接跟踪表，当这个表满的时候，就会出现上面的错误。
+  - 查看当前连接数:
+    - cat /proc/sys/net/netfilter/nf_conntrack_count
+  - iptables的链接跟踪表最大容量配置文件:
+    - cat /proc/sys/net/netfilter/nf_conntrack_max
+  - 注意：
+    - 由于nf_conntrack 工作在3层，支持IPv4和IPv6，而ip_conntrack只支持IPv4，因此nf_conntrack模块在Linux的2.6.15内核中被引入，而ip_conntrack在Linux的2.6.22内核被移除（centos6.x版本），因此不同版本的系统，配置文件也就不尽相同了。目前大多的ip_conntrack_\*已被 nf_conntrack_\* 取代，很多ip_conntrack_*仅仅是个软链接，原先的ip_conntrack配置目录/proc/sys/net/ipv4/netfilter/ 仍然存在，但是新的nf_conntrack在/proc/sys/net/netfilter/中，这样做是为了能够向下的兼容。
+    - 解决方法：
+      - 增加iptables的链接跟踪表最大容量
+        - sysctl -w net.nf_conntrack_max=100000
+        - cat /proc/sys/net/netfilter/nf_conntrack_max
+        - 注意：重启 iptables/ip6tables 会重新加载 nf_conntrack 相关的模块, 引起参数恢复成默认值。以免重启 iptables 引起参数失效. 也可以在 /etc/sysconfig/iptables-config 文件中开启选项 IPTABLES_SYSCTL_LOAD_LIST=”.nf_conntrack”, iptables 重启后会进行 sysctl 操作.
+      - 不使用ip_conntrack，nf_conntrack_ipv4，xt_state模块，关闭iptables的链接跟踪功能
+- 监控
+  - 模块
+    - mod_status：动态刷新服务器的进程状态，资源利用率等，不安全
+    - mod_info：只提供服务器配置信息
+  - 第三方软件
+    - zabbix
+    - Nagios
+- 模块：Apache1.3后开始使用基于指派表的方法连接外部模块到Apache的核心，使用共享库的运行机制，在程序需要时，将需要的部分从外部调入运行。
+  - 优缺点：灵活、拖慢速度
+  - 动态链接模块
+    - ./configure --enable-mods-shared=most
+    - 依赖so_module模块
+      - LoadModule
+      - LoadFile
+    - 模块加载顺序以后装入的模块为优先处理
+    - 增加新模块：
+      - prel_module
+      - php_module
+  - 核心模块
+    - core_module
+    - so_module
+    - http_module
+    - mpm
+- 配置
+  - http.conf
+    - .htaccess
+  - 虚拟主机：httpd-vhosts.conf
+    - 基于名字的虚拟主机：ServerName
+    - 基于IP的虚拟主机
+    - 动态虚拟主机：
+      - vhost_alias_module：通过分类符提取URL
+      - rewrite_module：通过正则表达式重写URl，更灵活，效率降低
+    - 日志问题：
+      - 每个虚拟主机都配置日志，考虑文件描述符不够的问题
+      - 虚拟主机保留一份日志，再用日志分割工具进行分割
+    - 让虚拟主机支持SSl：要先监听SSL端口
+  - CGI/FsstCGI/SSI：ExecCGI Includes
+    - 定义目录要考虑安全性问题
+    - FastCGI模块：在启用后会长期驻留内存，只要激活后即可工作，牺牲内存换取性能
+      - 独立于Web本身，崩溃不会连累Web服务器
+      - 更安全
+      - 更多的扩展性，支持模块化的身份验证和授权检查
+      - 支持分布式计算
+      - 性能更好
+    - SSI：服务器端包含，支持在普通的HTML页面中实现一小段动态生成内容的能力
+  - 重定向：
+    - 工作流程：
+      - 读后请求
+      - URL翻译
+      - 头部解析
+      - 访问控制
+      - 身份验证
+      - 授权
+      - MIME类型检查
+      - 修正
+      - 响应
+      - 日志记录
+      - 清除
+    - mod_rewrite：在修正阶段使用钩子函数跳转至读后请求，重新开始一个请求的循环处理
+      - 尽量在全局环境中使用，效率高
+  - 代理服务器
+    - 正向代理：NAT（网络地址转换）、缓存、监控及过滤
+    - 反向代理：负载均衡、缓冲、URL策略
+    - Apache中涉及到的模块
+      - mod_proxy
+      - mod_cache
+  - 数据库：
+    - httpd程序通过mod_dbd模块访问apr_dbd的数据库支持模块来实现对数据库的SQL操作。
+      - 底层的数据库驱动模块由apr-util工具来建立
+  - 日志控制：mod_log_config
+    - 日志类型
+      - 错误日志
+        - emerg、alert、crit、error、warn、notice、info、debug
+      - 访问日志
+        - 普通日志
+          - IP地址 用户验证协议 认证信息 时间及日期 客户端请求行 返回的状态码 发送给客户端的总字节数
+        - 复合日志：LogFormat
+    - 日志循环
+      - 手动循环：cron+脚本
+      - 自动循环：管道+日志循环工具rotatelogs
+    - 追踪用户
+      - mod_usertrack
+    - 日志分析软件
+      - Webalizer
+      - Awstats
+  - 性能
+    - 多路处理模块
+      - 线程化：伸缩性好
+        - worker：多进程、多线程
+        - event：非阻塞
+      - 非线程化：稳定性、兼容性好
+        - prefork：多进程
+    - XCache：PHP加速
+    - AB测试服务器性能
+  - 网站架构演进
+    - 基础的网页访问
+    - 多台服务器，数据库与Web分开，使用缓存技术减少对数据库的压力，防火墙
+    - 页面片段缓存、负载均衡、反向代理
+    - 对数据库进行分库、分表、分布式缓存，引入通用的框架来实现数据库的读写
+    - 数据读写分离、分布式存储，考虑内部通信的消耗、服务场景的切换，实现可伸缩的应用与数据库架构
+    - 拆分各种应用，解决分布式存储所带来的各种问题，同时制定更有效的框架
+  - 身份认证
+    - 认证类型模块：认证用户身份信息
+    - 认证支持模块：为Apache使用第三方的认证软件提供支持
+    - 授权支持模块：判断通过认证的用户的文件访问权限
+    - 基于系统的访问控制：mod_authz_host
+  - SSL
+    - 安装mod_ssl
+    - 签发证书
+      - 使用CA工具建立顶级证书
+      - 生成服务器证书
+        - 生成服务器私钥
+          - openssl genrsa -des3 -out server.key 1024
+        - 生成服务器证书
+          - openssl req -new -key server.key -out server.csr
+        - 使用之前生成的顶级CA来签发服务器证书
+          - mv server.csr newreq.pem
+          - ./CA.sh -sign
+          - mv newcert.pem server.crt
+      - 生成客户端证书
+        - 生成客户私钥
+          - openssl genrsa -des3 -out client.key 1024
+        - 生成客户证书
+          - openssl req -new -key client.key -out client.csr
+        - 签发客户端证书
+          - openssl ca -in client.csr -out client.crt
+        - 转换成pkcs12格式，以方便客户端安装时使用
+          - openssl pkcs12 -export clcerts -in client.crt -inkey client.key -out client.pfx
+        - 将顶级证书与私钥复制到SSL目录中
+          - cp ./demoCA/private/cakey.pem ./
+          - cp ./demoCA/cacert.pem ./
+          - openssl ca -gencrl -out client.crl
+      - 安装客户端证书
+
+### Nginx
+
+- varnish nginx squid各自缓存的优缺点。
+  - Varnish：高性能、开源的反向代理服务器和内存缓存服务器。
+    - 优点：
+      - 高性能；
+      - 多核支持；
+      - 支持0-60秒的精确缓存时间。
+    - 缺点：
+      - 不具备自动容错和恢复功能，重启后数据丢失；
+      - 在线扩容比较难。
+      - 32位机器上缓存文件大小为最大2GB；
+      - 不支持集群。
+    - 应用场景：
+      - 并发要求不是很大的小型系统和应用
+  - Squid：很古老的反向代理软件，拥有传统代理、身份验证、流量管理等高级功能，是目前互联网应用得最多的反向缓存代理服务器。
+    - 优点
+      - 完整庞大的cache技术资料，和很多的应用生产环境案例。
+    - 缺点
+      - 配置太复杂。
+  - nginx
+    - 优点
+      - 跨平台
+      - 配置简单
+      - 非阻塞、高并发连接
+      - 事件驱动
+      - 内存消耗小
+      - 内置健康检查功能
+      - 节省带宽：支持GZIP压缩，可以添加浏览器本地缓存的Header头
+      - 稳定性高
+    - 缺点
+      - 不支持带参数的动态链接
+      - 仅能支持http、https和Email协议
+      - Nginx缓存内部没有缓存过期和清理的任何机制，这些缓存的文件会永久性地保存在机器上，如果要缓存的东西非常多，那就会撑暴整个硬盘空间。
+      - 只能缓存200状态码，因此后端返回301/302/404等状态码都不会缓存，假如恰好有一个访问量很大的伪静态链接被删除，那就会不停穿透导致后端承载不小压力。
+      - Nginx不会自动选择内存或硬盘作为存储介质，一切由配置决定，当然在当前的操作系统里都会有操作系统级的文件缓存机制，所以存在硬盘上也不需要过分担心大并发读取造成的io性能问题。
+- worker_processes是个主模块指令，指定了Nginx要开启的进程数
+- nginx.conf中，一个http作用域中以嵌套多个sever作用域
+- upstream模块可以通过一个简单的调度算法来实现客户端IP到后端服务器的负载均衡
+- location模块支持正则表达式匹配，也支持条件判断匹配
+- Nginx的架构设计
+  - 模块化
+  - 基于事件驱动
+  - 异步
+  - 单线程且非阻塞
+- 与传统web服务器模型相比
+  - 传统web服务器基于进程或者线程的模型，在处理并发连接时会为每一个连接建立一个单独的进程或线程，且在网络或者输入输出操作时阻塞。
+  - 内存和CPU消耗大。单独的进程或线程需要准备新的运行时环境，包括堆和栈内存的分配，以及新的执行上下文这都会导致多余的CPU开销。
+  - Nginx大量使用多路复用和事件通知。Nginx启动以后，会在系统中以daemon的方式在后台运行，其中包括一个master进程，n个worker进程。所有的进程都是单线程的，且进程之间通信主要使用共享内存的方式。
+    - master进程：用于接收来自外界的信号，并给worker进程发送信号，同时监控worker进程的工作状态。
+    - worker进程：处理外部请求，每个worker请求相互独立且平等地竞争来自客户端的请求。一个worker进程只有一个主线程，只能处理一个请求。
+- Nginx负载均衡机制
+  - 以反向代理的方式进行负载均衡
+    - 反向代理方式是指以代理服务器来接受网络上的连接请求，然后将请求转发给内部网络上的服务器，并将从服务器上得到的结果返回给客户端。
+  - upstream支持的负载均衡分配策略：
+    - 轮询：每个请求按照时间顺序逐一分配到不同的后端服务器，如果后端服务器down，会自动标记并剔除。
+    - weight：指定轮询几率，weight和访问比率成正比，用于后端服务器性能不均的情况。
+    - ip_hash：每个请求按访问ip的hash结果分配，这样每个访客固定访问一个后端服务器，可以解决session的问题。
+    - fair（第三方）：按后端服务器的响应时间来分配请求，响应时间短的优先分配。
+    - url_hash（第三方）：按访问url的哈市结果来分配请求，使每个url定向到同一个后端服务器，后端服务器为缓存时比较有效。
+- 主流Web服务器软件的对比
+  - Apache
+    - 开放源码、跨平台、稳定
+    - 应对高并发的业务场景时表现不佳
+  - Tomcat
+    - 用于Java Web环境，主要处理动态请求
+    - 静态资源和高并发方面的性能较弱
+    - 常和Apache等软件搭配，实现动静态请求分离
+  - Nginx
+    - 轻量级、高并发性能强、功能多、占内存少、功能丰富
+    - 稳定性不如Apache、没有缓存清理机制、不支持带参数的动态链接
+- Nginx功能
+  - HTTP服务
+    - 静态文件
+      - 支持SSl，提供HTTPS访问
+      - GZIP，网页压缩
+      - 虚拟主机
+      - URL重写
+    - 动态文件
+      - FastCGI程序
+  - 代理
+    - 反向代理
+    - 负载均衡
+    - 缓存
+- 访问控制
+  - location匹配
+    - 精准匹配：=
+    - 非正则匹配：^~
+    - 正则匹配：~ 、~*
+    - 最大前缀匹配：默认
+    - 注意：优先级从上到下依次降低
+- 动态资源
+  - Apache + PHP
+    - 识别扩展名
+      - \<FilesMatch "\.php$">
+    - 配置目录索引页
+      - DirectoryIndex index.php
+  - Nginx + PHP-FPM
+    - 识别扩展名
+      - location ~ \\.php$ {}
+    - 配置目录索引页
+      - index index.php;
+    - 引入php-fpm配置文件
+      - fastcgi_pass 127.0.0.1:9000;
+      - include fastcgi.conf;
+- 动静分离
+  - Nginx+Apache
+    - location ~ \\.php$
+      - proxy_pass http://127.0.0.1:8080;
+      - proxy_set_header Host $host
+      - proxy_set_header X-Client-IP $remote_addr
+    - Apache开启虚拟主机，并加载remoteip_module模块，用于替换远程地址
+      - LoadModule remoteip_module modules/mod_remoteip.so
+      - RemoteIPHeader X-Client-IP
+      - RemoteIPInternalProxy 127.0.0.1
+  - Nginx+Tomcat
+    - location ~ \\.(jsp|do)$
+      - proxy_pass http://127.0.0.1:8080;
+      - proxy_set_header X-Client-IP $remote_addr
+- 负载均衡
+  - 加权轮询（一般轮询）
+    - proxy_pass http://web.server;
+    - upstream web_server {
+      - server 192.168.182.133 weight=1 max_fails=1 fail_timeout=2;
+      - server 192.168.182.134 weight=3 max_fails=2 fail_timeout=2;
+      - server 192.168.182.135 buckup;
+  - ip_hash：将请求按照IP的哈希结果分配，每个IP绑定固定的服务器
+    - upstream web_server {
+      - ip_hash;
+      - server 192.168.182.133;
+      - server 192.168.182.134 ;
+      - server 192.168.182.135 down ;
+  - 第三方模块
+    - fair：根据后端服务器的响应时间负载均衡
+      - upstream web_server {
+        - ip_hash;
+        - server 192.168.182.133;
+        - server 192.168.182.134 ;
+        - fair;
+- 缓存
+  - 永久缓存
+    - location / {
+      - root cache;
+      - proxy_store on;
+      - proxy_store_access user:rw group:rw all:r;
+      - proxy_temp_path cache_tmp;
+      - if (!-e $request_filename) {
+        - proxy_pass http://192.168.182.133;}}
+  - 临时缓存
+    - http {：
+      - proxy_temp_path /usr/local/nginx/proxy_temp_dir;
+      - proxy_cache_path /usr/local/nginx/proxy_cache_dir levels=1:2 keys_zone=cache_one:50m inactive=1m max_size=500m ;
+    - server {
+      - add_header X-Via $server_addr;
+      - add_header X-Cache $upstream_cache_status;
+      - location / {
+        - proxy_cache cache_one;
+        - \# 以域名、URL、参数组合成Web缓存的Key值。Nginx根据Key值哈希}}
+        - proxy_cache_key $host$uri$is_args$args;
+        - proxy_cache_valid 200 10m;
+        - proxy_cache_valid 304 1m;
+        - proxy_cache_valid 301 302 1h;
+        - proxy_cache_valid any 1m;
+        - proxy_pass http://192.168.182.133; }}
+- select和epoll
+  - Select 同步阻塞
+    - 每次调用select，都要把文件描述符从用户态拷贝到内核态，同时需要在内核遍历传递进来的所有文件描述符，这些开销在文件描述符很多时会很大。
+    - select支持的文件描述符比较小，默认为1024
+  - epoll 异步模型
+    - 支持一个进程打开大数目的socket描述符
+    - IO效率不随文件描述符数目增加而线性下降
+    - 使用mmap加速内核与用户空间的消息传递
+    - 通知机制：边缘触发和水平触发
+- 重写模块
+  - rewrite ^/images/(.*\\.jpg)$ /imgs/$1 flag;
+    - last：常用选项
+    - break：终止重写，不在继续匹配
+    - redirect：返回临时重定向的HTTP状态302
+    - permanent：返回永久重定向的HTTP状态301
+
+### LVS
+
+- LVS的三种负载均衡模式
+  - NAT模式（VS-NAT）
+    - 原理：
+      - 把客户端发来的数据包的IP头的目的地址，在负载均衡器上换成其中一台RS（真实服务器）的IP地址，并发至此RS来处理,RS处理完成后把数据交给经过负载均衡器,负载均衡器再把数据包的原IP地址改为自己的IP，将目的地址改为客户端IP地址即可期间,无论是进来的流量,还是出去的流量,都必须经过负载均衡器
+    - 优点：
+      - 集群中的物理服务器可以使用任何支持TCP/IP操作系统，只有负载均衡器需要一个合法的IP地址。
+    - 缺点：
+      - 扩展性有限。当服务器节点（普通PC服务器）增长过多时,负载均衡器将成为整个系统的瓶颈，因为所有的请求包和应答包的流向都经过负载均衡器。当服务器节点过多时，大量的数据包都交汇在负载均衡器那，速度就会变慢！
+  - IP隧道模式（VS-TUN）
+    - 原理：
+      - 首先要知道，互联网上的大多Internet服务的请求包很短小，而应答包通常很大。那么隧道模式就是，把客户端发来的数据包，封装一个新的IP头标记(仅目的IP)发给RS,RS收到后,先把数据包的头解开,还原数据包,处理后,直接返回给客户端,不需要再经过负载均衡器注意,由于RS需要对负载均衡器发过来的数据包进行还原,所以说必须支持IPTUNNEL协议所以,在RS的内核中,必须编译支持IPTUNNEL这个选项
+    - 优点：
+      - 负载均衡器只负责将请求包分发给后端节点服务器，而RS将应答包直接发给用户。所以，减少了负载均衡器的大量数据流动，负载均衡器不再是系统的瓶颈，就能处理很巨大的请求量，这种方式，一台负载均衡器能够为很多RS进行分发。而且跑在公网上就能进行不同地域的分发。
+    - 缺点：
+      - 隧道模式的RS节点需要合法IP，这种方式需要所有的服务器支持”IP Tunneling”(IP Encapsulation)协议，服务器可能只局限在部分Linux系统上。
+  - 直接路由模式（VS-DR）
+    - 原理：
+      - 负载均衡器和RS都使用同一个IP对外服务，但只有DR对ARP请求进行响应，所有RS对本身这个IP的ARP请求保持静默。也就是说网关会把对这个服务IP的请求全部定向给DR，而DR收到数据包后根据调度算法，找出对应的RS，把目的MAC地址改为RS的MAC（因为IP一致），并将请求分发给这台RS。由于IP一致，RS处理完成收到的数据包之后，可以直接将数据返给客户。由于负载均衡器要对二层包头进行改换，所以负载均衡器和RS之间必须在一个广播域，也可以简单的理解为在同一台交换机上。
+    - 优点：
+      - 和TUN（隧道模式）一样，负载均衡器也只是分发请求，应答包通过单独的路由方法返回给客户端。与VS-TUN相比，VS-DR这种实现方式不需要隧道结构，因此可以使用大多数操作系统做为物理服务器。
+      - 避免负载均衡服务器网卡带宽成为瓶颈，具有较好的性能，也是目前大型网站使用最广泛的一种负载均衡手段。
+    - 缺点：
+      - 要求负载均衡器的网卡必须与物理网卡在一个物理段上。
+- lvs/nginx/haproxy优缺点
+  - Nginx
+    - 优点：
+      - 工作在网络的7层之上，可以针对http应用做一些分流的策略，比如针对域名、目录结构，它的正则规则比HAProxy更为强大和灵活，这也是它目前广泛流行的主要原因之一，Nginx单凭这点可利用的场合就远多于LVS了。
+      - Nginx对网络稳定性的依赖非常小，理论上能ping通就就能进行负载功能，这个也是它的优势之一；相反LVS对网络稳定性依赖比较大。
+      - Nginx安装和配置比较简单，测试起来比较方便，它基本能把错误用日志打印出来。LVS的配置、测试就要花比较长的时间了，LVS对网络依赖比较大。
+      - 可以承担高负载压力且稳定，在硬件不差的情况下一般能支撑几万次的并发量，负载度比LVS相对小些。
+      - Nginx可以通过端口检测到服务器内部的故障，比如根据服务器处理网页返回的状态码、超时等等，并且会把返回错误的请求重新提交到另一个节点，不过其中缺点就是不支持url来检测。比如用户正在上传一个文件，而处理该上传的节点刚好在上传过程中出现故障，Nginx会把上传切到另一台服务器重新处理，而LVS就直接断掉了，如果是上传一个很大的文件或者很重要的文件的话，用户可能会因此而不满。
+      - Nginx不仅仅是一款优秀的负载均衡器/反向代理软件，它同时也是功能强大的Web应用服务器。LNMP也是近几年非常流行的web架构，在高流量的环境中稳定性也很好。
+      - Nginx现在作为Web反向加速缓存越来越成熟了，速度比传统的Squid服务器更快，可以考虑用其作为反向代理加速器。
+      - Nginx可作为中层反向代理使用，这一层面Nginx基本上无对手，唯一可以对比Nginx的就只有lighttpd了，不过lighttpd目前还没有做到Nginx完全的功能，配置也不那么清晰易读，社区资料也远远没Nginx活跃。
+      - Nginx也可作为静态网页和图片服务器，这方面的性能也无对手。还有Nginx社区非常活跃，第三方模块也很多。
+    - 缺点：
+      - Nginx仅能支持http、https和Email协议，适用范围小些。
+      - 对后端服务器的健康检查，只支持通过端口来检测，不支持通过url来检测。不支持Session的直接保持，但能通过ip_hash来解决。
+  - LVS：使用Linux内核集群实现一个高性能、高可用的负载均衡服务器，它具有很好的可伸缩性（Scalability)、可靠性（Reliability)和可管理性（Manageability)。
+    - 优点：
+      - 抗负载能力强、是工作在网络4层之上仅作分发之用，没有流量的产生，这个特点也决定了它在负载均衡软件里的性能最强的，对内存和cpu资源消耗比较低。
+      - 配置性比较低，这是一个缺点也是一个优点，因为没有可太多配置的东西，所以并不需要太多接触，大大减少了人为出错的几率。
+      - 工作稳定，因为其本身抗负载能力很强，自身有完整的双机热备方案，如LVS+Keepalived，不过我们在项目实施中用得最多的还是LVS/DR+Keepalived。
+      - 无流量，LVS只分发请求，而流量并不从它本身出去，这点保证了均衡器IO的性能不会收到大流量的影响。
+      - 应用范围比较广，因为LVS工作在4层，所以它几乎可以对所有应用做负载均衡，包括http、数据库、在线聊天室等等。
+    - 缺点：
+      - 软件本身不支持正则表达式处理，不能做动静分离；而现在许多网站在这方面都有较强的需求，这个是Nginx/HAProxy+Keepalived的优势所在。
+      - 如果是网站应用比较庞大的话，LVS/DR+Keepalived实施起来就比较复杂了，特别后面有Windows Server的机器的话，如果实施及配置还有维护过程就比较复杂了，相对而言Nginx/HAProxy+Keepalived就简单多了。
+      - 不像HAProxy等七层软负载面向阿德是HTTP包，所以七层负载可以做的URL解析等工作，LVS无法完成。
+  - HAProxy
+    - 特点：
+      - 支持两种代理模式TCP（四层）和HTTP（七层），也支持虚拟主机。
+      - 能够补充Nginx的一些缺点，比如支持Session的保持，Cookie的引导；同时支持通过获取指定的url来检测后端服务器的状态。
+      - 跟LVS类似，本身就只是一款负载均衡软件；单纯从效率上来讲HAProxy会比Nginx有更出色的负载均衡速度，在并发处理上也是优于Nginx的。
+      - 支持TCP协议的负载均衡转发，可以对MySQL读进行负载均衡，对后端的MySQL节点进行检测和负载均衡，大家可用LVS+Keepalived对MySQL主从做负载均衡。
+      - HAProxy负载均衡策略非常多，HAProxy的负载均衡算法现在具体有如下8种：
+        - roundrobin，表示简单的轮询；
+        - static-rr，表示根据权重，建议关注；
+        - leastconn，表示最少连接者先处理，建议关注；
+        - source，表示根据请求源IP，这个跟Nginx的IP_hash机制类似，我们用其作为解决session问题的一种方法，建议关注；
+        - ri，表示根据请求的URI；
+        - rl_param，表示根据请求的URl参数’balance url_param’ requires an URL parameter name；
+        - hdr(name)，表示根据HTTP请求头来锁定每一次HTTP请求；
+        - rdp-cookie(name)，表示根据据cookie(name)来锁定并哈希每一次TCP请求。
+- LVS的体系结构
+  - LVS架设的服务器集群系统有三个部分组成
+    - 最前端的负载均衡层，用Load Balance表示
+    - 中间的服务器集群层，用Server Array表示
+    - 最底端的数据共享存储层，用Shared Storage表示
+- LVS负载均衡机制
+  - LVS是四层负载均衡，即建立在OSI模型的第四层--传输层之上，支持TCP/UDP的负载均衡。
+  - 因此，相对于其他高层负载均衡的解决办法，它在DNS域名轮流解析、应用层负载的调度、客户端的调度等工作上执行效率高。
+  - LVS的转发主要通过修改IP地址（NAT模式），修改目标MAC（DR模式）来实现。
+
+### Keepalived
+
+- keepalived是以VRRP协议为实现基础的，VRRP全称Virtual Router Redundancy Protocol，即虚拟路由冗余协议。
+- 虚拟路由冗余协议，可以认为是实现路由器高可用的协议，即将N台提供相同功能的路由器组成一个路由器组，这个组里面有一个master和多个backup，master上面有一个对外提供服务的vip（该路由器所在局域网内其他机器的默认路由为该vip），master会发组播，当backup收不到vrrp包时就认为master宕掉了，这时就需要根据VRRP的优先级来选举一个backup当master。这样的话就可以保证路由器的高可用了。
+- keepalived主要有三个模块，分别是core、check和vrrp。
+  - core模块为keepalived的核心，负责主进程的启动、维护以及全局配置文件的加载和解析。
+  - check负责健康检查，包括常见的各种检查方式。
+  - vrrp模块是来实现VRRP协议的。
+- Keepalived健康检查方式配置
+  - HTTP_GET|SSL_GET
+  - HTTP_GET | SSL_GET
+  - {
+    - url {
+      - path /# HTTP/SSL 检查的url可以是多个
+      - digest <STRING> # HTTP/SSL 检查后的摘要信息用工具genhash生成
+      - status_code 200# HTTP/SSL 检查返回的状态码
+    - }
+    - connect_port 80 # 连接端口
+    - bindto<IPADD>
+    - connect_timeout 3 # 连接超时时间
+    - nb_get_retry 3 # 重连次数
+    - delay_before_retry 2 #连接间隔时间
+  - }
+
+### Docker
+
+- Docker四种网络模式
+  - host模式
+    - Docker使用了Linux的Namespaces技术来进行资源隔离，PID Namespace隔离进程，MountNamespace隔离文件系统，Network Namespace隔离网络等。一个Network Namespace提供一份独立的网络环境，包括网卡、路由、Iptable规则等都与其他的Network Namespace隔离。一个Docker容器一般会分配一个独立的Network Namespace。但如果启动容器的时候使用host模式，那么这个容器将不会获得一个独立的Network Namespace，而是和宿主机共用一个Network Namespace。容器将不会虚拟出自己的网卡，配置自己的IP等，而是使用宿主机的IP和端口。
+    - 例如，我们在10.10.101.105/24的机器上用host模式启动一个含有web应用的Docker容器，监听tcp80端口。当我们在容器中执行任何类似ifconfig命令查看网络环境时，看到的都是宿主机上的信息。而外界访问容器中的应用，则直接使用10.10.101.105:80即可，不用任何NAT转换，就如直接跑在宿主机中一样。但是，容器的其他方面，如文件系统、进程列表等还是和宿主机隔离的。
+  - container模式
+    - 指定新创建的容器和已经存在的一个容器共享一个Network Namespace，而不是和宿主机共享。新创建的容器不会创建自己的网卡，配置自己的IP，而是和一个指定的容器共享IP、端口范围等。同样，两个容器除了网络方面，其他的如文件系统、进程列表等还是隔离的。两个容器的进程可以通过lo网卡设备通信。
+  - none模式
+    - 在这种模式下，Docker容器拥有自己的Network Namespace，但是并不为Docker容器进行任何网络配置。也就是说，这个Docker容器没有网卡、IP、路由等信息。需要我们自己为Docker容器添加网卡、配置IP等。
+  - bridge模式
+    - bridge模式是Docker默认的网络设置，此模式会为每一个容器分配Network Namespace、设置IP等，并将一个主机上的Docker容器连接到一个虚拟网桥上。
+- docker常用命令
+  1. docker version  查看docker的版本号，包括客户端、服务端、依赖的Go等
+  2. docker info  查看系统(docker)层面信息，包括管理的images, containers数等
+  3. docker search <image>在docker index中搜索image
+  4. docker pull <image>从docker registry server 中下拉image
+  5. docker push <image|repository>推送一个image或repository到registry
+  6. docker push <image|repository>:TAG  同上，指定tag
+  7. docker inspect <image|container>查看image或container的底层信息
+  8. docker images  查看本机images
+  9. docker images –a  列出所有的images
+  10. dockerps默认显示正在运行中的container
+
+### 虚拟化与云计算
+
+- Web服务架构
+  - 表现层：HTTP服务器（Apache、Nginx）
+  - 业务逻辑层：Web应用服务器（Tomcat）
+  - 数据访问层：数据服务器（MySQL、redis、MongoDB）
+- 虚拟化的核心理念：以一种透明的方式提供抽象了的底层资源
+- 虚拟化是资源的逻辑表示，它不受物理限制的约束。
+- 虚拟化的常见类型
+  - 基础设施虚拟化
+    - 网络虚拟化
+      - 局域网络虚拟化：VLAN
+      - 广域网络虚拟化：VPN
+    - 存储虚拟化
+      - 基于存储设备：RAID
+      - 基于网络：网络附加存储（NAS）、存储区域网（SAN）
+  - 系统虚拟化
+    - 寄宿虚拟化：虚拟机监视器（VMM）
+    - 原生虚拟化：Hypervisor
+  - 软件虚拟化
+    - 应用虚拟化
+    - 高级语言虚拟化
+- 服务器虚拟化
+  - 核心技术
+    - CPU虚拟化：特权解除和陷入模拟，将GuestOS运行在非特权级，而将VMM运行于最高特权级(完全控制系统资源)。
+      - 全虚拟化：在执行时将VM上执行的Guest OS指令，翻译成 x86 指令集的一个子集，其中的敏感指令被替换成陷入指令。
+      - 半虚拟化：通过修改Guest OS的代码,将含有敏感指令的操作，替换为对VMM的超调用Hypercall，类似 OS 的系统调用,将控制权转移到VMM。
+      - 硬件辅助虚拟化：特权和敏感调用自动陷入hypervisor，不再需要二进制翻译或半虚拟化。虚拟机的状态保存在虚拟机控制结构(VMCS，VT-x)或虚拟机控制块(VMCB，AMD-V)中。
+    - 内存虚拟化：
+      - 内存虚拟化管理单元
+        - 影子页表法
+        - 页表写入法
+    - 设备与IO虚拟化
+      - 虚拟网卡
+      - 虚拟交换机
+- 创建虚拟化解决方案
+  - 创建基本虚拟镜像
+    - 创建虚拟机
+    - 安装操作系统
+    - 关停虚拟机
+  - 创建虚拟器件镜像
+    - 分析调研
+      - 分析解决方案应用模块
+      - 分析各模块关联关系
+      - 确定虚拟器件多种形态
+      - 对支撑应用进行联调
+    - 编制元数据和脚本
+      - 编制配置脚本
+      - 抽象配置元数据
+      - 单元测试
+      - 集成测试
+    - 制作虚拟器件
+      - 创建虚拟镜像
+      - 安装中间件和应用
+      - 安装配置脚本和元数据
+  - 发布虚拟器件镜像
+    - OVF：虚拟化格式
+  - 管理虚拟器件镜像
+    - 元数据与文件内容分别存储
+    - 切片存储：唯一标识符、内容摘要串
+- 部署虚拟化解决方案
+  - 规划部署环境
+    - 投资回报分析
+    - 资源规划
+    - 虚拟化平台厂商及产品选择
+  - 部署虚拟器件
+    - 选择虚拟器件并定制化
+    - 保存定制化参数文件为OVF Environment文件
+    - 选择部署的目标服务器
+    - 复制虚拟器件的镜像文件和配置文件
+    - 启动虚拟器件
+    - 在虚拟器件中进行激活
+- 管理虚拟化解决方案
+  - 集中监控
+  - 快捷管理
+  - 动态优化
+  - 高效备份
